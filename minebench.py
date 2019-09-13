@@ -6,13 +6,25 @@ import random
 import time
 import codecs
 import struct
-import os
-import sys
-import logging
-from multiprocessing import Process, cpu_count
 
 
 class Minebench:
+    @staticmethod
+    def get_score(times=50):
+        final_score = 0.
+        for _ in range(times):
+            filename = 'blocks.csv'
+            no_lines = InputUtils.get_file_lines(filename)
+
+            start_time = FormatUtils.current_timestamp_in_millis()
+            Minebench.run(**{'filename': filename, 'rows_no': no_lines, 'bits': 0x1F888888, 'sequential_nonce': True})
+            total_millis = FormatUtils.current_timestamp_in_millis() - start_time
+
+            score = int(no_lines * 10e6 / total_millis)
+            final_score += score
+
+        return int(final_score / times)
+
     @staticmethod
     def get_block_header(row, bits=0x1D00FFFF, sequential_nonce=False):
         # Line to dict
@@ -40,19 +52,14 @@ class Minebench:
             merkle_hashes_len = len(merkle_hashes)
             new_merkle_hashes = []
             for i in range(0, merkle_hashes_len, 2):
-                if merkle_hashes_len > i+1:
+                if merkle_hashes_len > i + 1:
                     h1 = FormatUtils.sha256_to_hex_little_endian(merkle_hashes[i])
-                    h2 = FormatUtils.sha256_to_hex_little_endian(merkle_hashes[i+1])
+                    h2 = FormatUtils.sha256_to_hex_little_endian(merkle_hashes[i + 1])
                     new_merkle_hashes.append(FormatUtils.hex_to_sha256_sha256(h1 + h2))
-                    # logging.debug('Hash Tx1  : %s' % (merkle_hashes[i]))
-                    # logging.debug('Hash Tx2  : %s' % (merkle_hashes[i+1]))
-                    # logging.debug('Hash TxS  : %s' % (new_merkle_hashes[-1]))
                     continue
-                elif merkle_hashes_len == i+1:
+                elif merkle_hashes_len == i + 1:
                     h1 = FormatUtils.sha256_to_hex_little_endian(merkle_hashes[i])
                     new_merkle_hashes.append(FormatUtils.hex_to_sha256_sha256(h1 + h1))
-                    # logging.debug('Hash Tx1  : %s' % (merkle_hashes[i]))
-                    # logging.debug('Hash TxS  : %s' % (new_merkle_hashes[-1]))
                     continue
                 new_merkle_hashes.append(FormatUtils.hex_to_sha256_sha256(merkle_hashes[i]))
             merkle_hashes = new_merkle_hashes
@@ -60,42 +67,27 @@ class Minebench:
         return merkle_hashes[0]
 
     @staticmethod
-    def get_points(blocks_no, millis):
-        return int(blocks_no * 10e6 / total_millis)
-
-    @staticmethod
     def get_dict_from_file_line(line):
         if type(line) == str:
             line = line.strip().split(',')
-        return {'ver': line[0],
-                'prev_block': line[1],
-                'time': line[2],
-                'tx': line[3]}
+        return {'ver': line[0], 'prev_block': line[1], 'time': line[2], 'tx': line[3]}
 
     @staticmethod
-    def process_job(filename,
-                    start_row=0,
-                    rows_no=0,
-                    bits=0x1D00FFFF,
-                    sequential_nonce=False,
-                    process_id=None):
+    def run(
+            filename,
+            rows_no,
+            bits=0x1D00FFFF,
+            sequential_nonce=False,
+    ):
         random.seed(1984)
-        logging.info(f'process {process_id} started')
         with open(filename, 'r') as file:
-            InputUtils.forward_file_lines(file, start_row)
             for i in range(0, rows_no):
                 try:
                     row = next(file)
                 except StopIteration:
                     break
 
-                if i % 100 == 99:
-                    logging.info(
-                        f'process {process_id}: {i + 1} mined blocks')
-
-                Minebench.get_block_header(row,
-                                           bits,
-                                           sequential_nonce).mine()
+                Minebench.get_block_header(row, bits, sequential_nonce).mine()
 
 
 class InputUtils:
@@ -104,7 +96,7 @@ class InputUtils:
         with open(filename, 'r') as file:
             no_lines = 0
             try:
-                while(next(file)):
+                while (next(file)):
                     no_lines += 1
             except StopIteration:
                 pass
@@ -112,7 +104,7 @@ class InputUtils:
 
     @staticmethod
     def forward_file_lines(file_handler, lines_no):
-        for i in range(lines_no):
+        for _ in range(lines_no):
             try:
                 next(file_handler)
             except StopIteration:
@@ -149,6 +141,7 @@ class FormatUtils:
     def hex_to_bin(string):
         return bytearray.fromhex(string)
 
+    @staticmethod
     def bin_to_hex(array):
         return codecs.encode(array, 'hex')
 
@@ -172,9 +165,7 @@ class FormatUtils:
 
     @staticmethod
     def bin_to_sha256_sha256(header_bin):
-        second_hash = codecs.encode(
-            FormatUtils.bin_to_sha256_sha256_bin(header_bin),
-                                                 'hex').decode('utf-8')
+        second_hash = codecs.encode(FormatUtils.bin_to_sha256_sha256_bin(header_bin), 'hex').decode('utf-8')
         return second_hash
 
     @staticmethod
@@ -185,14 +176,7 @@ class FormatUtils:
 
 
 class BlockHeader:
-    def __init__(self,
-                 ver,
-                 prev_block,
-                 merkle_root,
-                 time,
-                 bits,
-                 nonce=None,
-                 sequential_nonce=True):
+    def __init__(self, ver, prev_block, merkle_root, time, bits, nonce=None, sequential_nonce=True):
         self.ver = int(ver)  # Block version number (4 bytes)
         # Hash of the previous block header (32 bytes)
         self.prev_block = prev_block
@@ -207,25 +191,18 @@ class BlockHeader:
 
     def mine(self):
         network_target = self._get_target()
-        logging.debug(f'Target: {network_target}')
         network_target = FormatUtils.hex_to_bin(network_target)
 
         start_time = FormatUtils.current_timestamp_in_millis()
-        block_seconds = 0
         attempts = 1
 
         current_hash = self._get_hash(self.header_bin)
         while (current_hash > network_target):
             self._set_new_nonce()
             current_hash = self._get_hash(self.header_bin)
-            block_seconds = FormatUtils.current_timestamp_in_millis() - start_time
             attempts += 1
 
         current_hash = FormatUtils.bin_to_hex(current_hash)
-        logging.debug(f'Block found: {current_hash}')
-        logging.debug(f'Nonce: {self.nonce}')
-        logging.debug(f'Attempts: {attempts}')
-        logging.debug('Block elapsed seconds: %.2f\n' % (block_seconds / 1000))
 
         return current_hash
 
@@ -233,7 +210,7 @@ class BlockHeader:
         bits_big_endian_hex = FormatUtils.uint32_to_hex_big_endian(self.bits)
         exp = FormatUtils.hex_to_int(bits_big_endian_hex[:2])  # 8 bits
         coeff = FormatUtils.hex_to_int(bits_big_endian_hex[2:])  # 24 bits
-        target = coeff * 2 ** (8 * (exp - 3))
+        target = coeff * 2**(8 * (exp - 3))
         return FormatUtils.uint256_to_hex_big_endian(target)
 
     def _get_bin(self):
@@ -256,7 +233,7 @@ class BlockHeader:
             self.header_bin[-4:] = struct.pack("<I", self.nonce)
             return
 
-        while(True):
+        while (True):
             nonce = random.randint(0, 0x7FFFFFFF)
             if not nonce in self.used_nonces:
                 self.used_nonces.add(nonce)
@@ -266,40 +243,4 @@ class BlockHeader:
 
 
 if __name__ == "__main__":
-    print('\nMinebench v0.1.5 (Python 3.6+)\n')
-    logging.getLogger().setLevel(logging.INFO)
-    processes_no = cpu_count()
-    process_ids = range(0, processes_no)
-
-    if len(sys.argv) != 2:
-        logging.error("You must indicate an input csv file.")
-        raise SystemExit
-    filename = sys.argv[1]
-
-    no_lines = InputUtils.get_file_lines(filename)
-    split_size = int(no_lines / processes_no)
-
-    bits = 0x1F888888
-    processes = []
-    start_time = FormatUtils.current_timestamp_in_millis()
-    for i in process_ids:
-        if no_lines - (i + 1) * split_size < 0:
-            split_size = no_lines - i * split_size
-        process = Process(name=i,
-                          target=Minebench.process_job,
-                          kwargs={'filename': filename,
-                                  'start_row': split_size * i,
-                                  'rows_no': split_size,
-                                  'bits': bits,
-                                  'process_id': i,
-                                  'sequential_nonce': True})
-        process.start()
-        processes.append(process)
-
-    for process in processes:
-        process.join()
-
-    total_millis = FormatUtils.current_timestamp_in_millis() - start_time
-    print('\n- Elapsed time: %.2f seconds' % (total_millis / 1000))
-    print('- Points: %d' % Minebench.get_points(no_lines, total_millis))
-    print(f'- Bits: {bits}\n')
+    print(Minebench.get_score())
